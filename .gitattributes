@@ -1,0 +1,23 @@
+# Les sources décompilées de Sudden Strike mélangent des fins de ligne CRLF et des
+# encodages hérités (Windows-1252 / CP1251). On désactive toute conversion
+# automatique : Git stocke les octets tels quels.
+* -text
+
+# Fichiers explicitement binaires : pas de diff textuel, pas de fusion ligne à ligne.
+*.pck   binary
+*.col   binary
+*.hot   binary
+*.ani   binary
+*.inf   binary
+*.res   binary
+*.pl    binary
+*.rs2   binary
+*.fnt   binary
+*.jpg   binary
+*.db    binary
+*.dat   binary
+*.cw3   binary
+*.cw6   binary
+*.cw9   binary
+*.msi   binary
+*.exe   binary

@@ -1,0 +1,14 @@
+After opening palette file (*.col/*.pl) editing is available. Also numbered list of all elements of palette with RGB values appear.
+One could select any element both at the palette and in the list.  Selected element take color border.
+One could select any elements simultaneously  pushing "Select all" button (change into "Deselct all") .
+In the menu "Edit"-"Cancel all" - load initial palette.
+In the menu "View" - "File name"/"File path" switch between short and complete file name.
+Work modes:
+1.With one element:
+- set new color for element by click once (LBM) into the color dialog.
+- by the right click appear message with number of element and HEX value in the file.
+2.With several elements:
+- setting one color (by corresponding button).
+- change RGB channels intensity  (from -100% till +100% of initial).
+
+

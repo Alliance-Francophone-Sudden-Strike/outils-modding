@@ -1,0 +1,10 @@
+# Archives .aps recompilées (produit de build, à distribuer séparément)
+*.aps
+
+# Fichiers temporaires / système
+*.bak
+*.tmp
+*~
+Thumbs.db
+.DS_Store
+desktop.ini
