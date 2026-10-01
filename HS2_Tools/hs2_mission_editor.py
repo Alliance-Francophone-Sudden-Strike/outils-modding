@@ -55,9 +55,11 @@ def find_game_root():
 GAME_ROOT = find_game_root()
 MAPS_DIR = GAME_ROOT / "Run" / "APRM WW II_Edit" / "maps_ap.src"
 UNITS_DIR = GAME_ROOT / "Modding" / "UNITS"
-BACKUP_DIR = SCRIPT_DIR / "backups"
+BACKUP_DIR = Path(__import__("os").environ.get("HS2_BACKUP_DIR") or SCRIPT_DIR / "backups")
 
 # allow overriding the maps folder:  python3 hs2_mission_editor.py /path/to/maps_ap.src
+if __import__("os").environ.get("HS2_MAPS_DIR"):
+    MAPS_DIR = Path(__import__("os").environ["HS2_MAPS_DIR"])
 if len(sys.argv) > 1 and Path(sys.argv[1]).is_dir():
     MAPS_DIR = Path(sys.argv[1])
 
@@ -536,6 +538,77 @@ def known_unit_ids():
     return set(unit_index()) or used_unit_ids()
 
 
+def mission_fingerprint(map_id, mis_id):
+    """Empreinte des fichiers éditables : invalide un aperçu si la mission a changé entre-temps."""
+    import hashlib
+
+    d = mission_dir(map_id, mis_id)
+    h = hashlib.sha256()
+    for name in ("support", "scripts2"):
+        f = d / name
+        h.update(f.read_bytes() if f.is_file() else b"")
+    return h.hexdigest()
+
+
+def ops_token(map_id, mis_id, ops):
+    import hashlib
+
+    blob = json.dumps(ops, sort_keys=True, ensure_ascii=False) + mission_fingerprint(map_id, mis_id)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def ai_context(map_id, mis_id):
+    """Résumé compact d'une mission (blocs support regroupés, délais, ids d'unités utilisés)."""
+    if pops is None:
+        raise ValueError("hs2_prompt_ops.py introuvable")
+    support, scripts = _structured(map_id, mis_id)
+    idx = unit_index()
+    used = set()
+    for b in support["blocks"]:
+        for u in b["units"]:
+            used.add(u["id"])
+            used.update(p["id"] for p in u.get("passengers", []))
+    names = {k: idx.get(k, ["", ""]) for k in sorted(used)}
+    ctx = pops.build_context(support, scripts, names)
+    ctx["support_blocks"] = [b for b in ctx["support_blocks"] if b["units"]]
+    ctx["known_unit_ids"] = (
+        {k: v[0] for k, v in names.items()} if any(v[0] for v in names.values()) else sorted(names)
+    )
+    ctx["note"] = (
+        "known_unit_ids = ids présents dans CETTE mission. Un id absent mais valide existe peut-être "
+        "dans l'installation : le chercher avec la recherche d'unités avant d'ajouter."
+    )
+    return ctx
+
+
+def search_units(query="", limit=40):
+    idx = unit_index()
+    q = (query or "").lower().strip()
+    if idx:
+        rows = [(k, v[0]) for k, v in idx.items() if not q or q in k.lower() or q in (v[0] or "").lower()]
+    else:
+        rows = [(k, "") for k in sorted(used_unit_ids()) if not q or q in k.lower()]
+    rows.sort()
+    return {"total": len(rows), "units": [{"id": k, "name": n} for k, n in rows[:limit]],
+            "source": "Modding/UNITS" if idx else "ids vus dans les missions (Modding/UNITS non extrait)"}
+
+
+def ai_preview(map_id, mis_id, ops):
+    res = ai_run(map_id, mis_id, ops, dry=True)
+    res["token"] = ops_token(map_id, mis_id, ops) if not res["errors"] else None
+    return res
+
+
+def ai_apply(map_id, mis_id, ops, token):
+    """Écrit seulement si `token` provient d'un aperçu des MÊMES ops sur les MÊMES fichiers."""
+    if not token or token != ops_token(map_id, mis_id, ops):
+        raise ValueError(
+            "token invalide ou périmé : refais un aperçu (preview) avec exactement ces opérations "
+            "(la mission a peut-être changé depuis)."
+        )
+    return ai_run(map_id, mis_id, ops, dry=False)
+
+
 def ai_plan(map_id, mis_id, prompt):
     if pops is None:
         raise ValueError("hs2_prompt_ops.py introuvable")
@@ -601,6 +674,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(unit_index())
             elif u.path == "/api/stats":
                 self._json(unit_stats())
+            elif u.path == "/api/ai/context":
+                self._json(ai_context(q["map"], q["mis"]))
+            elif u.path == "/api/ai/units":
+                self._json(search_units(q.get("q", ""), int(q.get("limit", 40))))
             elif u.path == "/api/ai/config":
                 self._json(pops.public_config() if pops else {"error": "module absent"})
             elif u.path == "/api/mission":
@@ -630,6 +707,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(res)
             elif self.path == "/api/ai/plan":
                 self._json(ai_plan(req["map"], req["mis"], req["prompt"]))
+            elif self.path == "/api/ai/preview":
+                self._json(ai_preview(req["map"], req["mis"], req["ops"]))
+            elif self.path == "/api/ai/apply":
+                self._json(ai_apply(req["map"], req["mis"], req["ops"], req.get("token")))
             elif self.path == "/api/ai/run":
                 self._json(ai_run(req["map"], req["mis"], req["ops"], bool(req.get("dry", True))))
             else:
