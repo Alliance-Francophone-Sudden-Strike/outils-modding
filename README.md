@@ -107,6 +107,17 @@ Le tutoriel accompagne les outils audio et décrit notamment le processus d’in
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | **TileTool** | Ancien outil de texturing, développé par **Brian / Sardaukar**. Destiné à la manipulation des textures/tuiles utilisées par le jeu. |
 
+### Hidden Stroke II / Sudden Strike 2 (outils récents)
+
+Contrairement au reste de la collection, ces outils sont **récents et maintenus**. Ils ciblent **Hidden Stroke II** et le moteur **Sudden Strike 2**, pas SS1/SSF/SSRW. Python 3.8+, sans dépendance, interface dans le navigateur (macOS et Windows). Dossier : [`HS2_Tools/`](HS2_Tools/README.md), licence MIT.
+
+| Outil                  | Description                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **HS2 Mission Editor** | Édite les convois de renfort, l'expérience, les joueurs et les scripts de chaque carte. L'onglet **Prompt** ajuste les renforts en langage naturel, avec aperçu et sauvegarde avant écriture.   |
+| **HS2 APS Tool**       | Décompacte et recompacte `lang.aps` et toute archive FZFF.                                                                                                                                       |
+| **HS2 Unit Comparator** | Comparateur d'unités, page HTML autonome.                                                                                                                                                       |
+| **decompile_aps.py**   | Décompression brute d'une archive `.aps` en ligne de commande.                                                                                                                                   |
+
 ## Documentation incluse
 
 L’un des objectifs principaux de la collection originale était de ne pas simplement distribuer les exécutables, mais de fournir également les explications nécessaires à leur utilisation.
