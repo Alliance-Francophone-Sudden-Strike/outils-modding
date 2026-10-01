@@ -131,24 +131,28 @@ def build_context(support, scripts, unit_names):
             "known_unit_ids": {k: (v[0] or "")[:32] for k, v in catalog.items()} if catalog else sorted(used)}
 
 
+OPS_DOC = """Opérations autorisées (rien d'autre) :
+- {"op":"set_unit_fields","blocks":"all"|<int>|[<int>...],"unit_id":<id|null>,"level":"top"|"passengers"|"all","fields":{"hp":..,"ammo":..,"expa":..,"morale":..,"lives":..,"grp":..,"crew":..}}
+- {"op":"add_unit","block":<int>,"unit_id":<id>,"count":<int>,"fields":{...}}
+- {"op":"remove_unit","block":<int>,"unit_id":<id>,"count":<int>|"all"}
+- {"op":"set_timing","script":<nom|null>,"kind":"timed"|"flag"|"trigger"|null,"block":<int|null>,"line":<int|null>,"seconds":<int>}  ou  "shift_seconds":<int> (relatif, peut être négatif)
+"""
+
+OPS_RULES = """Règles :
+- "block" = indice 0-based du bloc support. "set_timing" avec "block" cible les arrivées qui livrent ce bloc.
+- Les délais sont en SECONDES (10 min = 600). Plage 0..86400.
+- Plages : hp/ammo/expa/morale -1..100 (-1 = défaut), lives 0..100, grp -1..99, crew 0..31.
+- unit_id doit exister dans known_unit_ids. Si tu n'es pas sûr, ne l'invente pas : renvoie ops=[] et explique.
+- Ne fais que ce qui est demandé. Demande ambiguë : ops=[] et explication courte de ce qu'il manque.
+"""
+
 SYSTEM_PROMPT = """Tu pilotes l'éditeur de missions de Hidden Stroke II / Sudden Strike.
 Tu reçois l'état d'une mission (blocs de renforts "support", délais d'arrivée en secondes)
 et une demande en langage naturel. Tu réponds UNIQUEMENT par un objet JSON :
 {"explanation": "<une phrase>", "ops": [ ... ]}
 Aucun texte hors JSON, aucun bloc markdown.
 
-Opérations autorisées (rien d'autre) :
-- {"op":"set_unit_fields","blocks":"all"|<int>|[<int>...],"unit_id":<id|null>,"level":"top"|"passengers"|"all","fields":{"hp":..,"ammo":..,"expa":..,"morale":..,"lives":..,"grp":..,"crew":..}}
-- {"op":"add_unit","block":<int>,"unit_id":<id>,"count":<int>,"fields":{...}}
-- {"op":"remove_unit","block":<int>,"unit_id":<id>,"count":<int>|"all"}
-- {"op":"set_timing","script":<nom|null>,"kind":"timed"|"flag"|"trigger"|null,"block":<int|null>,"line":<int|null>,"seconds":<int>}  ou  "shift_seconds":<int> (relatif, peut être négatif)
-
-Règles :
-- "block" = indice 0-based du bloc support. "set_timing" avec "block" cible les arrivées qui livrent ce bloc.
-- Les délais sont en SECONDES (10 min = 600). Plage 0..86400.
-- Plages : hp/ammo/expa/morale -1..100 (-1 = défaut), lives 0..100, grp -1..99, crew 0..31.
-- unit_id doit exister dans known_unit_ids. Si tu n'es pas sûr, ne l'invente pas : renvoie ops=[] et explique.
-- Ne fais que ce qui est demandé. Demande ambiguë : ops=[] et explication courte de ce qu'il manque."""
+""" + OPS_DOC + "\n" + OPS_RULES
 
 
 # ---------------------------------------------------------------------------

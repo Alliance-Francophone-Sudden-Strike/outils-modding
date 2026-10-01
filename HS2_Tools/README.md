@@ -123,3 +123,14 @@ python3 hs2_aps_tool.py pack   "../Run/APRM/lang.aps" --section UNITS --from "..
 compressed directory of 20-byte records `(name_offset, 8, index+streams_before,
 size, 16384)` and a compressed `\0`-separated name table (cp1252, `\` paths).
 Verified by byte-identical extraction of all 1562 entries of `lang.aps`.
+
+## Piloter le Mission Editor avec Claude
+
+Deux modes, sans LLM local ni clé API : Claude fait office de LLM. Dans les deux cas, rien n'est écrit sans un aperçu
+préalable des mêmes opérations (token), et chaque écriture crée un backup horodaté.
+
+- **Claude Code** : lance `claude` dans `HS2_Tools/`. Les consignes sont dans `CLAUDE.md` ; Claude utilise `hs2_cli.py`
+  (`maps`, `context`, `units`, `preview`, `apply`). Variable `HS2_GAME_ROOT` (ou `HS2_MAPS_DIR`) pour désigner le jeu.
+- **Claude Desktop (MCP)** : copie `claude_desktop_config.example.json` dans la configuration de Claude Desktop en
+  remplaçant les chemins **absolus** (y compris celui de `python3`), puis redémarre l'application. Outils :
+  `list_missions`, `get_mission_context`, `search_units`, `preview_ops`, `apply_ops`.

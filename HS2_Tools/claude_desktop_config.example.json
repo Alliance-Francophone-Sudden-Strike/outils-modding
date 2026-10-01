@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hs2-mission-editor": {
+      "command": "/chemin/absolu/vers/python3",
+      "args": ["/chemin/absolu/vers/HS2_Tools/hs2_mcp_server.py"],
+      "env": {
+        "HS2_GAME_ROOT": "/chemin/absolu/vers/la/racine/du/jeu",
+        "HS2_BACKUP_DIR": "/chemin/absolu/vers/backups-hs2"
+      }
+    }
+  }
+}
