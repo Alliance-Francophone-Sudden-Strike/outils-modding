@@ -298,7 +298,8 @@ def unit_index():
                 continue
             name = short = ""
             try:
-                head = f.read_bytes()[:4096].decode(ENC, "replace")
+                with f.open("rb") as fh:
+                    head = fh.read(4096).decode(ENC, "replace")
                 m = re.search(r'^name "([^"]*)"', head, re.M)
                 if m:
                     name = m.group(1)
@@ -322,12 +323,23 @@ def unit_index():
 _stats_cache = None
 
 
+def _score_name_key(value):
+    """Normalize typography only; never collapse different vehicle variants."""
+    import unicodedata
+    value = unicodedata.normalize("NFKC", str(value or "")).casefold().strip().strip('"')
+    value = value.replace("–", "-").replace("—", "-").replace("‑", "-")
+    return re.sub(r"[^a-z0-9]+", "", value)
+
+
 def comparator_rows():
-    """Raw comparator rows keyed by unit display name (latest comparator wins)."""
-    files = sorted(SCRIPT_DIR.glob("HS2_Unit_Comparator_*.html"))
+    """Load newest comparator by its embedded version, not lexical filename order."""
+    files = list(SCRIPT_DIR.glob("HS2_Unit_Comparator_*.html"))
     if not files:
         return {}, None
-    src = files[-1]
+    def version(path):
+        m = re.search(r"_V(\d+(?:\.\d+)*)", path.stem, re.I)
+        return tuple(int(x) for x in m.group(1).split('.')) if m else (0,)
+    src = max(files, key=lambda p: (version(p), p.stat().st_mtime))
     try:
         html = src.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"const units=(\[.*?\]);", html, re.S)
@@ -336,22 +348,45 @@ def comparator_rows():
         return {}, None
     by_name = {}
     for r in rows:
-        # one comparator name carries a stray leading quote — strip it
         nm = (r.get("Nom de l'unité") or "").lstrip('"').strip()
         by_name.setdefault(nm, r)
     return by_name, src.name
 
 
 def unit_stats():
-    """unit-file id -> {nation, overall, at} from the comparator."""
+    """Match exact, then normalized display name, then narrowly defined IDs."""
     global _stats_cache
     if _stats_cache is not None:
         return _stats_cache
     by_name, src = comparator_rows()
+    normalized = {}
+    for name, row in by_name.items():
+        normalized.setdefault(_score_name_key(name), []).append(row)
+    # ID fallback is intentionally restricted to these verified model families.
+    # No fuzzy matching: it could silently assign the wrong tank variant.
+    id_aliases = {
+        "t70": "T-70 Mod.42 (45mm)",
+        "t-70": "T-70 Mod.42 (45mm)",
+        "kv8s": "KV-8S Mod.43 (45mm & LF)",
+        "kv-8s": "KV-8S Mod.43 (45mm & LF)",
+        # Verified against LANG44B1010 and comparator Fusion 4.4 V13.1.
+        "kv-8": "KV-8S Mod.43 (45mm & LF)",
+        "t-35": "T-35A Mod.35 (76mm & 45mm)",
+        "humber": "Humber Mk.I (15mm)",
+        "t-34-85_ger": 'Pz.Kpfw.T-34 capture 747(r) (85mm)',
+    }
     stats = {}
     for uid, (name, _short) in unit_index().items():
         r = by_name.get(name)
-        if r:
+        if r is None:
+            matches = normalized.get(_score_name_key(name), [])
+            if len(matches) == 1:
+                r = matches[0]
+        if r is None and (not name or _score_name_key(name) not in normalized):
+            alias = id_aliases.get(uid.casefold())
+            if alias:
+                r = by_name.get(alias)
+        if r is not None:
             stats[uid] = {
                 "nation": r.get("Nation") or "Other",
                 "overall": r.get("Overall") or 0,
@@ -827,6 +862,9 @@ abbr { cursor:help; text-decoration:underline dotted var(--dim); }
 .balwrap h4 { margin:0 0 6px; font-size:12px; color:var(--dim);
   text-transform:uppercase; letter-spacing:.4px; }
 .balcards { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+.reinf-rows { display:flex; flex-direction:column; gap:10px; }
+.reinf-row { display:flex; gap:10px; width:100%; }
+.reinf-row .balcard { flex:1 1 0; min-width:0; }
 .balcard { background:#12151a; border:1px solid var(--line); border-radius:6px;
   padding:6px 10px; font-size:12px; }
 .balcard span { color:var(--dim); display:block; }
@@ -835,6 +873,14 @@ abbr { cursor:help; text-decoration:underline dotted var(--dim); }
 .balcard.pickable:hover { background:#1a2230; }
 .balcard.pending { outline:2px solid var(--acc); }
 .balcard.grouped { border-color:var(--ok); }
+.balcard.reinf-ok { border:2px solid #36b37e; }
+.balcard.reinf-warn { border:2px solid var(--warn); }
+.balcard.reinf-err { border:2px solid var(--err); }
+.balcard.reinf-max { border:2px solid #a970ff; }
+.balcard span.score-ok { color:#36b37e; font-weight:700; }
+.balcard span.score-warn { color:var(--warn); font-weight:700; }
+.balcard span.score-err { color:var(--err); font-weight:700; }
+.balcard span.score-max { color:#a970ff; font-weight:700; }
 .balstatus { font-size:12px; font-weight:600; margin:2px 0 8px; }
 .balstatus.ok { color:var(--ok); } .balstatus.warn { color:var(--warn); }
 .balstatus.err { color:var(--err); }
@@ -971,13 +1017,24 @@ function renderMission(){
   <div class="pane" id="pane-info"></div>
   <div class="pane" id="pane-ai"></div>
   <div class="pane" id="pane-helppane"></div>`;
+  const rendered=new Set(["support"]);
   for (const t of ed.querySelectorAll(".tab")) t.onclick=()=>{
     ed.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
     ed.querySelectorAll(".pane").forEach(x=>x.classList.remove("active"));
     t.classList.add("active");
     ed.querySelector("#pane-"+t.dataset.t).classList.add("active");
+    // Heavy secondary panes are rendered only if the user actually opens them.
+    // This keeps the balance-only workflow fast on large missions.
+    if(!rendered.has(t.dataset.t)){
+      if(t.dataset.t==="players") renderPlayers();
+      else if(t.dataset.t==="scripts") renderScripts();
+      else if(t.dataset.t==="info") renderInfo();
+      else if(t.dataset.t==="helppane") renderHelp();
+      else if(t.dataset.t==="ai") renderAI();
+      rendered.add(t.dataset.t);
+    }
   };
-  renderSupport(); renderPlayers(); renderScripts(); renderInfo(); renderHelp(); renderAI();
+  renderSupport();
 }
 
 /* ---------- nation balance (scores from the Unit Comparator HTML) ---------- */
@@ -1023,11 +1080,19 @@ function resetNationGroups(){
   saveGroups(); renderBalance();
 }
 
+function statForId(id){
+  if(!id) return null;
+  if(STATS[id]) return STATS[id];
+  const wanted=String(id).toLowerCase();
+  for(const k in STATS) if(k.toLowerCase()===wanted) return STATS[k];
+  return null;
+}
+
 function missionBalance(){
   const sums={}; let unrated=0;
   const add=(id,mult)=>{
     if(!id||mult<=0) return;
-    const st=STATS[id];
+    const st=statForId(id);
     if(!st){ unrated+=mult; return; }
     // while picking, show individual nations so they can be clicked
     const n=groupPickMode ? st.nation : groupKeyForNation(st.nation);
@@ -1117,6 +1182,143 @@ function numInput(obj, key, cls){
     data-key="${key}" title="${esc(FIELD_HELP[key]||"")}">`;
 }
 
+function reinforcementCardsHtml(){
+  // Build a compact score card for each reinforcement block first.  We then
+  // compare blocks that share the same reinforcement number (Ger1/URSS1/Ame1/Brit1,
+  // Ger2/URSS2/...) instead of comparing nations *inside* a single block.
+  const cards=[];
+  M.support.blocks.forEach((b,bi)=>{
+    let total=0, rated=0, overall=0, at=0;
+    for(const u of b.units){
+      total++;
+      const st=statForId(u.id);
+      if(st){ overall+=st.overall; at+=st.at; rated++; }
+      for(const p of u.passengers){
+        total++;
+        const ps=statForId(p.id);
+        if(ps){ overall+=ps.overall; at+=ps.at; rated++; }
+      }
+    }
+    if(!total) return;
+    const label=b.name||`Support ${bi+1}`;
+
+    // Reinforcement groups are identified by the part of the label AFTER the
+    // nation prefix, not by the final number alone.  Example:
+    //   Ger2 / USA2 / Rus2             -> group "2"
+    //   gerzep2 / USAzep2 / Ruszep2    -> group "zep2"
+    // This prevents two distinct reinforcement sets sharing the same number
+    // from being merged into one visual row.
+    const rawLabel=String(label).trim();
+    // Strip the nation prefix explicitly and keep *everything else* as the
+    // reinforcement identifier. This works with identifiers with or without
+    // digits: Ger2/USA2/Rus2 -> 2, gerzep/USAzep/Ruszep -> zep,
+    // gerzep2/USAzep2/Ruszep2 -> zep2, gerini/usini/rusini -> ini.
+    // ALL is also a nation/team prefix and is matched case-insensitively:
+    // ALL1/Ger1/Rus1 -> 1, Allrenf/Gerrenf/Rusrenf -> renf.
+    // Longest prefixes are tested first so e.g. "usa" is never consumed as "us".
+    // Mission authors use many short country tags (GER, RU, ITA, FR, UK, etc.).
+    // Treat them case-insensitively and strip ONLY the country tag at the start.
+    // The complete remainder is the reinforcement key. Examples:
+    //   GER1 / ITA1 / RU1       -> 1
+    //   GERL / FRL / RUSL       -> l
+    //   GERM / ITAM / RUM / UKM -> m
+    //   GerH / ITH / RUH / UkH  -> h
+    //   gerzep / USAzep / Ruszep -> zep
+    //   gerini / usini / rusini  -> ini
+    // Longer aliases MUST come first (USA before US, RUS before RU).
+    // Some missions use the ultra-short German/Russian tags G and R: G1/R1, Gzep2/Rzep2, etc.
+    const nationPrefixRE=/^(?:american|america|british|britain|russian|russia|germany|german|soviet|france|russe|urss|ussr|brit|ital|usa|ame|ger|rus|all|ita|fra|rom|rou|jap|jpn|yug|de|gb|uk|us|ru|fr|it|ro|jp|yu|g|r)/i;
+    const mPrefix=rawLabel.match(nationPrefixRE);
+    let groupPart=rawLabel;
+    if(mPrefix){
+      groupPart=rawLabel.slice(mPrefix[0].length).replace(/^[ _.-]+/,"").trim();
+    }
+    if(!mPrefix || !groupPart) groupPart=`block-${bi}`;
+    const rowKey=groupPart.toLowerCase();
+    const tail=groupPart.match(/(\d+)\s*$/);
+    const rowNumber=tail?Number(tail[1]):Number.POSITIVE_INFINITY;
+    const rowVariant=tail?groupPart.slice(0,tail.index).toLowerCase():groupPart.toLowerCase();
+    cards.push({bi,label,rowKey,rowNumber,rowVariant,total,rated,overall,at,border:"",overallCls:"",atCls:""});
+  });
+
+  const rows={};
+  for(const c of cards) (rows[c.rowKey]||(rows[c.rowKey]=[])).push(c);
+
+  const metricGap=(row,key)=>{
+    const vals=row.map(c=>c[key]);
+    const hi=Math.max(...vals), lo=Math.min(...vals);
+    return {hi,lo,gap:lo>0?(hi-lo)/lo*100:(hi>0?100:0)};
+  };
+  const severity=(gap)=>gap>15?"err":(gap>=10?"warn":"ok");
+
+  for(const row of Object.values(rows)){
+    if(row.length<2){ row.forEach(c=>c.border=""); continue; }
+    const go=metricGap(row,"overall"), ga=metricGap(row,"at");
+    const worst=Math.max(go.gap,ga.gap);
+
+    if(worst<10){
+      // Fully balanced reinforcement row: every nation is immediately green.
+      row.forEach(c=>{ c.border="reinf-ok"; c.overallCls="score-ok"; c.atCls="score-ok"; });
+      continue;
+    }
+
+    // In an imbalanced row, highlight the strongest nation in purple and the
+    // weakest nation in orange/red according to the WORST metric.  Middle cards
+    // stay neutral. Ties are intentionally highlighted together.
+    const worstKey=go.gap>=ga.gap?"overall":"at";
+    const gw=worstKey==="overall"?go:ga;
+    const lowSeverity=severity(gw.gap);
+    row.forEach(c=>{
+      if(c[worstKey]===gw.hi) c.border="reinf-max";
+      else if(c[worstKey]===gw.lo) c.border=lowSeverity==="err"?"reinf-err":"reinf-warn";
+    });
+
+    // Text colouring identifies WHICH score creates the imbalance. Each metric
+    // is assessed independently, so Overall and AT can point to different nations.
+    for(const [key,g] of [["overall",go],["at",ga]]){
+      if(g.gap<10) continue;
+      const sev=severity(g.gap);
+      const prop=key==="overall"?"overallCls":"atCls";
+      row.forEach(c=>{
+        if(c[key]===g.hi) c[prop]="score-max";
+        else if(c[key]===g.lo) c[prop]=sev==="err"?"score-err":"score-warn";
+      });
+    }
+  }
+
+  let html=`<div class="block open"><div class="bh">
+    <b>Reinforcement scores</b><span class="cnt">Overall &amp; AT Skill only</span>
+    </div><div class="bc"><div class="reinf-rows" id="reinforcementScores">`;
+  // One visual row per reinforcement number. This keeps Reinforcement 1, 2, 3…
+  // aligned correctly regardless of whether the mission has 2, 3 or 4 nations.
+  const orderedRowKeys=Object.keys(rows).sort((a,b)=>{
+    const A=rows[a][0], B=rows[b][0];
+    // Sort primarily by reinforcement number, then keep the plain group before
+    // variants carrying the same number (2, zep2, para2...).
+    if(A.rowNumber!==B.rowNumber) return A.rowNumber-B.rowNumber;
+    if(A.rowVariant!==B.rowVariant){
+      if(A.rowVariant==="") return -1;
+      if(B.rowVariant==="") return 1;
+      return A.rowVariant.localeCompare(B.rowVariant);
+    }
+    return A.bi-B.bi;
+  });
+  for(const rk of orderedRowKeys){
+    const row=rows[rk];
+    html+=`<div class="reinf-row" data-reinf="${esc(rk)}">`;
+    for(const c of row){
+      html+=`<div class="balcard ${c.border}">
+        <span>${esc(c.label)} · ${c.total} unit(s)${c.rated<c.total?` · ${c.rated} rated`:""}</span>
+        <strong><span class="${c.overallCls}" style="display:inline">Overall ${Math.round(c.overall).toLocaleString("en-US")}</span> · <span class="${c.atCls}" style="display:inline">AT ${Math.round(c.at).toLocaleString("en-US")}</span></strong>
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+  if(!cards.length) html+=`<div class="balnote">No reinforcement present in this mission.</div>`;
+  html+=`</div></div></div>`;
+  return html;
+}
+
 function renderSupport(){
   const pane=$("#pane-support");
   if (!M.support_raw){ pane.innerHTML="<i>No support file in this mission.</i>"; return; }
@@ -1136,6 +1338,7 @@ function renderSupport(){
     <span class="savemsg" id="msg-support"></span>
   </div>
   <div id="balpanel"></div>
+  ${reinforcementCardsHtml()}
   <div class="bulk">
     <b>Bulk edit:</b>
     <label>set</label>
@@ -1184,7 +1387,6 @@ function renderSupport(){
   });
   renderSupportBlocks();
 }
-
 function unitRow(u, isPass, bi, ui, pi){
   const info = UNITS[u.id];
   const nm = info ? (info[0]||info[1]||"") : "⚠ unknown unit id";

@@ -31,6 +31,15 @@ Edits the map-editor source files under
   Overall / AT totals, and unit-name tooltips carry the unit's nation and scores.
   Infantry, guns and planes are not rated by the comparator and are counted
   separately as "unrated".
+- **Reinforcement scores** (Support tab, under the balance panel) — one card per
+  support block (Overall / AT Skill), aligned by reinforcement id (`Ger2` / `USA2` /
+  `Rus2` → row `2`; `gerzep2` → row `zep2`). Within a row: green = balanced (<10 %),
+  orange/red = weakest nation (10–15 % / >15 %), purple = strongest. Comparator names
+  are matched exactly, then typography-normalised, then via a short verified ID alias
+  list — never fuzzy. The newest `HS2_Unit_Comparator_*` is chosen by its embedded
+  version number.
+- **Windows folder picker** — `Mission Editor_2.bat` opens a small dialog listing the 5
+  most recent maps folders (`mission_editor_recent_maps.txt`, git-ignored).
 - **Group nations (allies)** — same mechanics as the comparator: click "Group
   nations", pick 2+ nations in the Overall row (e.g. French + American +
   British), Validate — their scores merge into one entry before the balance is
