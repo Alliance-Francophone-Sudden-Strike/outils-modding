@@ -29,37 +29,14 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-try:
-    import hs2_prompt_ops as pops
-except ImportError:  # l'éditeur reste utilisable sans le module
-    pops = None
-
 ENC = "cp1252"
 SCRIPT_DIR = Path(__file__).resolve().parent
-
-
-def find_game_root():
-    """HS2_GAME_ROOT, sinon le dossier parent (outil copié dans l'installation),
-    sinon ../game (structure du dépôt Git)."""
-    import os
-
-    env = os.environ.get("HS2_GAME_ROOT")
-    cands = ([Path(env)] if env else []) + [SCRIPT_DIR.parent, SCRIPT_DIR.parent / "game"]
-    for c in cands:
-        if (c / "Run").is_dir():
-            return c
-    return SCRIPT_DIR.parent
-
-
-GAME_ROOT = find_game_root()
+GAME_ROOT = SCRIPT_DIR.parent
 MAPS_DIR = GAME_ROOT / "Run" / "APRM WW II_Edit" / "maps_ap.src"
 UNITS_DIR = GAME_ROOT / "Modding" / "UNITS"
-BACKUP_DIR = Path(__import__("os").environ.get("HS2_BACKUP_DIR") or SCRIPT_DIR / "backups")
+BACKUP_DIR = SCRIPT_DIR / "backups"
 
 # allow overriding the maps folder:  python3 hs2_mission_editor.py /path/to/maps_ap.src
-if __import__("os").environ.get("HS2_MAPS_DIR"):
-    MAPS_DIR = Path(__import__("os").environ["HS2_MAPS_DIR"])
 if len(sys.argv) > 1 and Path(sys.argv[1]).is_dir():
     MAPS_DIR = Path(sys.argv[1])
 
@@ -540,136 +517,6 @@ def save_file(map_id, mis_id, which, mode, data):
 
 
 # ----------------------------------------------------------------------------
-# pilotage par prompt (hs2_prompt_ops)
-# ----------------------------------------------------------------------------
-
-
-def _structured(map_id, mis_id):
-    m = load_mission(map_id, mis_id)
-    if not m.get("support"):
-        raise ValueError("support non éditable en mode structuré (round-trip KO) — édition manuelle uniquement")
-    return m["support"], m.get("scripts")
-
-
-_used_ids_cache = None
-
-
-def used_unit_ids():
-    """Ids d'unités vus dans les `support` de toute l'installation : référentiel de repli
-    quand Modding/UNITS n'a pas été extrait (APS Tool)."""
-    global _used_ids_cache
-    if _used_ids_cache is None:
-        ids = set()
-        for f in MAPS_DIR.glob("map.*/mis.*/support"):
-            try:
-                ids.update(re.findall(r"ID=(\S+) HP=", read_text(f)))
-            except OSError:
-                pass
-        _used_ids_cache = ids
-    return _used_ids_cache
-
-
-def known_unit_ids():
-    return set(unit_index()) or used_unit_ids()
-
-
-def mission_fingerprint(map_id, mis_id):
-    """Empreinte des fichiers éditables : invalide un aperçu si la mission a changé entre-temps."""
-    import hashlib
-
-    d = mission_dir(map_id, mis_id)
-    h = hashlib.sha256()
-    for name in ("support", "scripts2"):
-        f = d / name
-        h.update(f.read_bytes() if f.is_file() else b"")
-    return h.hexdigest()
-
-
-def ops_token(map_id, mis_id, ops):
-    import hashlib
-
-    blob = json.dumps(ops, sort_keys=True, ensure_ascii=False) + mission_fingerprint(map_id, mis_id)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
-
-
-def ai_context(map_id, mis_id):
-    """Résumé compact d'une mission (blocs support regroupés, délais, ids d'unités utilisés)."""
-    if pops is None:
-        raise ValueError("hs2_prompt_ops.py introuvable")
-    support, scripts = _structured(map_id, mis_id)
-    idx = unit_index()
-    used = set()
-    for b in support["blocks"]:
-        for u in b["units"]:
-            used.add(u["id"])
-            used.update(p["id"] for p in u.get("passengers", []))
-    names = {k: idx.get(k, ["", ""]) for k in sorted(used)}
-    ctx = pops.build_context(support, scripts, names)
-    ctx["support_blocks"] = [b for b in ctx["support_blocks"] if b["units"]]
-    ctx["known_unit_ids"] = (
-        {k: v[0] for k, v in names.items()} if any(v[0] for v in names.values()) else sorted(names)
-    )
-    ctx["note"] = (
-        "known_unit_ids = ids présents dans CETTE mission. Un id absent mais valide existe peut-être "
-        "dans l'installation : le chercher avec la recherche d'unités avant d'ajouter."
-    )
-    return ctx
-
-
-def search_units(query="", limit=40):
-    idx = unit_index()
-    q = (query or "").lower().strip()
-    if idx:
-        rows = [(k, v[0]) for k, v in idx.items() if not q or q in k.lower() or q in (v[0] or "").lower()]
-    else:
-        rows = [(k, "") for k in sorted(used_unit_ids()) if not q or q in k.lower()]
-    rows.sort()
-    return {"total": len(rows), "units": [{"id": k, "name": n} for k, n in rows[:limit]],
-            "source": "Modding/UNITS" if idx else "ids vus dans les missions (Modding/UNITS non extrait)"}
-
-
-def ai_preview(map_id, mis_id, ops):
-    res = ai_run(map_id, mis_id, ops, dry=True)
-    res["token"] = ops_token(map_id, mis_id, ops) if not res["errors"] else None
-    return res
-
-
-def ai_apply(map_id, mis_id, ops, token):
-    """Écrit seulement si `token` provient d'un aperçu des MÊMES ops sur les MÊMES fichiers."""
-    if not token or token != ops_token(map_id, mis_id, ops):
-        raise ValueError(
-            "token invalide ou périmé : refais un aperçu (preview) avec exactement ces opérations "
-            "(la mission a peut-être changé depuis)."
-        )
-    return ai_run(map_id, mis_id, ops, dry=False)
-
-
-def ai_plan(map_id, mis_id, prompt):
-    if pops is None:
-        raise ValueError("hs2_prompt_ops.py introuvable")
-    support, scripts = _structured(map_id, mis_id)
-    names = unit_index() or {u: ["", ""] for u in sorted(used_unit_ids())}
-    res = pops.plan(prompt, support, scripts, names)
-    res.update(ai_run(map_id, mis_id, res["ops"], dry=True))
-    return res
-
-
-def ai_run(map_id, mis_id, ops, dry=True):
-    if pops is None:
-        raise ValueError("hs2_prompt_ops.py introuvable")
-    support, scripts = _structured(map_id, mis_id)
-    sup2, scr2, changes, warnings, errors = pops.apply_ops(support, scripts, ops, known_unit_ids())
-    out = {"changes": changes, "warnings": warnings, "errors": errors, "saved": []}
-    if errors or dry or not changes:
-        return out
-    if serialize_support(sup2) != serialize_support(support):
-        out["saved"].append(save_file(map_id, mis_id, "support", "structured", sup2))
-    if scripts is not None and serialize_scripts(scr2) != serialize_scripts(scripts):
-        out["saved"].append(save_file(map_id, mis_id, "scripts2", "structured", scr2))
-    return out
-
-
-# ----------------------------------------------------------------------------
 # HTTP server
 # ----------------------------------------------------------------------------
 
@@ -709,12 +556,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(unit_index())
             elif u.path == "/api/stats":
                 self._json(unit_stats())
-            elif u.path == "/api/ai/context":
-                self._json(ai_context(q["map"], q["mis"]))
-            elif u.path == "/api/ai/units":
-                self._json(search_units(q.get("q", ""), int(q.get("limit", 40))))
-            elif u.path == "/api/ai/config":
-                self._json(pops.public_config() if pops else {"error": "module absent"})
             elif u.path == "/api/mission":
                 self._json(load_mission(q["map"], q["mis"]))
             elif u.path == "/img":
@@ -740,14 +581,6 @@ class Handler(BaseHTTPRequestHandler):
                     req["map"], req["mis"], req["file"], req["mode"], req["data"]
                 )
                 self._json(res)
-            elif self.path == "/api/ai/plan":
-                self._json(ai_plan(req["map"], req["mis"], req["prompt"]))
-            elif self.path == "/api/ai/preview":
-                self._json(ai_preview(req["map"], req["mis"], req["ops"]))
-            elif self.path == "/api/ai/apply":
-                self._json(ai_apply(req["map"], req["mis"], req["ops"], req.get("token")))
-            elif self.path == "/api/ai/run":
-                self._json(ai_run(req["map"], req["mis"], req["ops"], bool(req.get("dry", True))))
             else:
                 self._json({"error": "unknown endpoint"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -1008,14 +841,12 @@ function renderMission(){
     <div class="tab" data-t="players">Players &amp; paradrops</div>
     <div class="tab" data-t="scripts">Scripts</div>
     <div class="tab" data-t="info">Mission info</div>
-    <div class="tab" data-t="ai">🤖 Prompt</div>
     <div class="tab" data-t="helppane">❓ Parameter help</div>
   </div>
   <div class="pane active" id="pane-support"></div>
   <div class="pane" id="pane-players"></div>
   <div class="pane" id="pane-scripts"></div>
   <div class="pane" id="pane-info"></div>
-  <div class="pane" id="pane-ai"></div>
   <div class="pane" id="pane-helppane"></div>`;
   const rendered=new Set(["support"]);
   for (const t of ed.querySelectorAll(".tab")) t.onclick=()=>{
@@ -1030,7 +861,6 @@ function renderMission(){
       else if(t.dataset.t==="scripts") renderScripts();
       else if(t.dataset.t==="info") renderInfo();
       else if(t.dataset.t==="helppane") renderHelp();
-      else if(t.dataset.t==="ai") renderAI();
       rendered.add(t.dataset.t);
     }
   };
@@ -1182,7 +1012,15 @@ function numInput(obj, key, cls){
     data-key="${key}" title="${esc(FIELD_HELP[key]||"")}">`;
 }
 
-function reinforcementCardsHtml(){
+function renderSupport(){
+  const pane=$("#pane-support");
+  if (!M.support_raw){ pane.innerHTML="<i>No support file in this mission.</i>"; return; }
+  if (!M.support){
+    pane.innerHTML = `<div class="warnbox">This support file has an unusual layout —
+      reinforcement balance cannot be calculated safely.</div>`;
+    return;
+  }
+
   // Build a compact score card for each reinforcement block first.  We then
   // compare blocks that share the same reinforcement number (Ger1/URSS1/Ame1/Brit1,
   // Ger2/URSS2/...) instead of comparing nations *inside* a single block.
@@ -1286,7 +1124,7 @@ function reinforcementCardsHtml(){
     }
   }
 
-  let html=`<div class="block open"><div class="bh">
+  let html=`<div id="balpanel"></div><div class="block open"><div class="bh">
     <b>Reinforcement scores</b><span class="cnt">Overall &amp; AT Skill only</span>
     </div><div class="bc"><div class="reinf-rows" id="reinforcementScores">`;
   // One visual row per reinforcement number. This keeps Reinforcement 1, 2, 3…
@@ -1316,76 +1154,8 @@ function reinforcementCardsHtml(){
   }
   if(!cards.length) html+=`<div class="balnote">No reinforcement present in this mission.</div>`;
   html+=`</div></div></div>`;
-  return html;
-}
-
-function renderSupport(){
-  const pane=$("#pane-support");
-  if (!M.support_raw){ pane.innerHTML="<i>No support file in this mission.</i>"; return; }
-  if (!M.support){
-    pane.innerHTML = `<div class="warnbox">This support file has an unusual layout —
-      structured editing is disabled to stay safe. You can still edit the raw text
-      below (a backup is made on save).</div>
-      <textarea id="sup_raw" rows="24">${esc(M.support_raw)}</textarea>
-      <p><button onclick="saveRaw('support','sup_raw')">Save raw support</button>
-      <span class="savemsg" id="msg-support"></span></p>`;
-    return;
-  }
-  const S=M.support;
-  let html = `
-  <div class="savebar">
-    <button onclick="saveSupport()">💾 Save support</button>
-    <span class="savemsg" id="msg-support"></span>
-  </div>
-  <div id="balpanel"></div>
-  ${reinforcementCardsHtml()}
-  <div class="bulk">
-    <b>Bulk edit:</b>
-    <label>set</label>
-    <select id="bk_field">${["expa","morale","hp","ammo"].map(f=>
-      `<option value="${f}">${FLABEL[f]}</option>`).join("")}</select>
-    <label>to</label><input id="bk_val" class="num" value="50">
-    <label>for</label>
-    <select id="bk_scope">
-      <option value="all">all units (whole mission)</option>
-      <option value="top">transports / vehicles only</option>
-      <option value="pass">passengers only</option>
-    </select>
-    <label><input type="checkbox" id="bk_skip" checked>
-      leave “-1 (default)” untouched</label>
-    <button class="ghost" onclick="bulkApply()">Apply</button>
-  </div>
-  <div class="block" id="flagsblock">
-    <div class="bh" onclick="this.parentNode.classList.toggle('open')">
-      <b>Entry flags</b><span class="cnt">${S.flags.filter(f=>f.vals[0]>=0).length}
-      active of ${S.flags.length} — arrival &amp; destination points of support convoys</span>
-    </div>
-    <div class="bc"><table class="units"><tr>
-      <th title="Arrival point (map cell coordinates)">X1</th>
-      <th title="Arrival point (map cell coordinates)">Y1</th>
-      <th title="Middle value — observed 0…6 (flag index / owner). 0 on unused slots.">K</th>
-      <th title="Destination point (map cell coordinates)">X2</th>
-      <th title="Destination point (map cell coordinates)">Y2</th></tr>`;
-  S.flags.forEach((f,i)=>{
-    html += "<tr>" + f.vals.map((v,j)=>
-      `<td><input class="num ${v===-1?"neg":""}" data-flag="${i}" data-j="${j}"
-        value="${v}"></td>`).join("") + "</tr>";
-  });
-  html += `</table><div class="crumb">-1,-1,0,-1,-1 = unused slot. Coordinates are
-    map cells (0…map size-1).</div></div></div>
-  <label style="font-size:12px;color:var(--dim)">
-    <input type="checkbox" id="showempty" onchange="renderSupportBlocks()">
-    show empty support slots</label>
-  <div id="supblocks"></div>`;
   pane.innerHTML=html;
-  pane.querySelectorAll("input[data-flag]").forEach(inp=>{
-    inp.onchange=()=>{
-      const f=S.flags[+inp.dataset.flag];
-      f.vals[+inp.dataset.j]=parseInt(inp.value||0,10)||0;
-      f.dirty=true; inp.classList.add("mod");
-    };
-  });
-  renderSupportBlocks();
+  renderBalance();
 }
 function unitRow(u, isPass, bi, ui, pi){
   const info = UNITS[u.id];
@@ -1821,60 +1591,6 @@ async function saveMisdesc(){
 }
 
 /* ---------- help tab ---------- */
-
-/* ---------- prompt tab : demande en langage naturel -> opérations -> aperçu -> sauvegarde ---------- */
-async function renderAI(){
-  const pane=$("#pane-ai");
-  let cfg={}; try{ cfg=await api("/api/ai/config"); }catch(e){}
-  pane.innerHTML=`
-  <p style="margin-top:0">Décris l'ajustement voulu ; le LLM le traduit en <b>opérations bornées</b>
-  (champs support, ajout/retrait d'unités, délais d'arrivée). Rien n'est écrit avant ton accord,
-  et chaque sauvegarde crée un backup. Seul un résumé de la mission est envoyé au LLM.</p>
-  <div class="crumb">LLM : <b>${esc(cfg.provider||"?")}</b> · ${esc(cfg.model||"")} ·
-    ${esc(cfg.base_url||"")} ${cfg.provider==="anthropic"&&!cfg.has_key?"· ⚠ clé API absente":""}
-    — réglage dans <code>${esc(cfg.config_file||"llm_config.json")}</code></div>
-  <textarea id="ai-prompt" rows="3" style="width:100%" class="txt"
-    placeholder="ex : renforts alliés plus tôt de 2 minutes, expérience des convois 3 et 4 à 70, ajoute 2 chars lourds au convoi 5"></textarea>
-  <p><button id="ai-plan">Générer le plan</button>
-     <button id="ai-prev" class="ghost">Aperçu (ops éditées)</button>
-     <button id="ai-apply" class="danger" disabled>Appliquer &amp; sauvegarder</button>
-     <span id="msg-ai" class="savemsg"></span></p>
-  <div id="ai-expl" class="crumb"></div>
-  <b>Opérations (JSON, modifiable)</b>
-  <textarea id="ai-ops" rows="9" style="width:100%;font-family:monospace;font-size:12px" class="txt"></textarea>
-  <div id="ai-out"></div>`;
-  const show=r=>{
-    const li=(a,c)=>a.map(x=>`<li style="color:${c}">${esc(x)}</li>`).join("");
-    $("#ai-out").innerHTML=`<ul>${li(r.errors||[],"var(--err)")}${li(r.warnings||[],"var(--warn)")}${li(r.changes||[],"var(--ok)")}</ul>`;
-    $("#ai-apply").disabled = !!(r.errors&&r.errors.length) || !(r.changes&&r.changes.length);
-  };
-  const ops=()=>{ try{ return JSON.parse($("#ai-ops").value||"[]"); }catch(e){ throw new Error("JSON invalide : "+e.message); } };
-  $("#ai-plan").onclick=async()=>{
-    const prompt=$("#ai-prompt").value.trim(); if(!prompt) return;
-    msg("ai","Le LLM réfléchit…",""); $("#ai-apply").disabled=true;
-    try{
-      const r=await api("/api/ai/plan",{map:CUR.map,mis:CUR.mis,prompt});
-      $("#ai-expl").textContent=r.explanation||""; $("#ai-ops").value=JSON.stringify(r.ops,null,1);
-      show(r); msg("ai","Plan prêt — vérifie l'aperçu.","ok");
-    }catch(e){ msg("ai",e.message,"err"); }
-  };
-  $("#ai-prev").onclick=async()=>{
-    try{ show(await api("/api/ai/run",{map:CUR.map,mis:CUR.mis,ops:ops(),dry:true})); msg("ai","","");
-    }catch(e){ msg("ai",e.message,"err"); }
-  };
-  $("#ai-apply").onclick=async()=>{
-    if(dirtyCount()>0){ alert("Modifications non sauvegardées dans les autres onglets : sauvegarde-les ou recharge la mission d'abord."); return; }
-    try{
-      const r=await api("/api/ai/run",{map:CUR.map,mis:CUR.mis,ops:ops(),dry:false});
-      show(r); M=await api(`/api/mission?map=${CUR.map}&mis=${CUR.mis}`);
-      const keep=$("#ai-out").innerHTML, p=$("#ai-prompt").value, o=$("#ai-ops").value;
-      renderSupport(); renderScripts(); await renderAI();
-      $("#ai-out").innerHTML=keep; $("#ai-prompt").value=p; $("#ai-ops").value=o; $("#ai-apply").disabled=true;
-      msg("ai","Sauvegardé ("+(r.saved||[]).length+" fichier(s), backups dans backups/). Ouvre la carte dans l'éditeur de cartes et re-sauvegarde-la.","ok");
-    }catch(e){ msg("ai",e.message,"err"); }
-  };
-}
-
 function renderHelp(){
   $("#pane-helppane").innerHTML=`
   <h3>Support unit parameters</h3>

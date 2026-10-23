@@ -44,20 +44,7 @@ CHUNK = 16384
 ENC = "cp1252"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-
-
-def _find_game_root():
-    """HS2_GAME_ROOT, else parent folder (tool copied into the install), else ../game (Git layout)."""
-    import os
-
-    env = os.environ.get("HS2_GAME_ROOT")
-    for c in ([Path(env)] if env else []) + [SCRIPT_DIR.parent, SCRIPT_DIR.parent / "game"]:
-        if (c / "Run").is_dir():
-            return c
-    return SCRIPT_DIR.parent
-
-
-GAME_ROOT = _find_game_root()
+GAME_ROOT = SCRIPT_DIR.parent  # Tools/ lives at the game root
 
 
 # ----------------------------------------------------------------------------

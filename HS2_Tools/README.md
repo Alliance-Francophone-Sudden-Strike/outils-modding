@@ -31,15 +31,6 @@ Edits the map-editor source files under
   Overall / AT totals, and unit-name tooltips carry the unit's nation and scores.
   Infantry, guns and planes are not rated by the comparator and are counted
   separately as "unrated".
-- **Reinforcement scores** (Support tab, under the balance panel) — one card per
-  support block (Overall / AT Skill), aligned by reinforcement id (`Ger2` / `USA2` /
-  `Rus2` → row `2`; `gerzep2` → row `zep2`). Within a row: green = balanced (<10 %),
-  orange/red = weakest nation (10–15 % / >15 %), purple = strongest. Comparator names
-  are matched exactly, then typography-normalised, then via a short verified ID alias
-  list — never fuzzy. The newest `HS2_Unit_Comparator_*` is chosen by its embedded
-  version number.
-- **Windows folder picker** — `Mission Editor_2.bat` opens a small dialog listing the 5
-  most recent maps folders (`mission_editor_recent_maps.txt`, git-ignored).
 - **Group nations (allies)** — same mechanics as the comparator: click "Group
   nations", pick 2+ nations in the Overall row (e.g. French + American +
   British), Validate — their scores merge into one entry before the balance is
@@ -56,24 +47,6 @@ Edits the map-editor source files under
   save** (the #1 way to corrupt a mission when editing by hand). Numbers after
   `#` are stored digit-reversed (`#006` = 600 s); a read-only decoded preview
   is available.
-- **🤖 Prompt tab** — describe the adjustment in plain language ("allied
-  reinforcements 2 minutes earlier", "set Expa of convoys 3 and 4 to 70", "add
-  2 heavy tanks to convoy 5"). An LLM turns it into a short list of **bounded
-  JSON operations** (`set_unit_fields`, `add_unit`, `remove_unit`,
-  `set_timing`); it never writes files. The tool validates every operation
-  (field ranges, block indices, unit IDs seen in the install, delay range),
-  shows a **preview** of every change, and only then saves through the normal
-  path (structured round-trip, `size` headers recomputed, timestamped backup).
-  The operations stay editable as JSON before applying, and any error rejects
-  the whole plan. Only a compact summary of the mission (support blocks,
-  delays, unit IDs) is sent to the LLM — no game file.
-  Configure the backend by copying `llm_config.example.json` to
-  `llm_config.json`: `"provider": "openai"` targets any OpenAI-compatible
-  server (default: local Ollama on `127.0.0.1:11434`, nothing leaves your
-  machine); `"provider": "anthropic"` uses the Anthropic API with the key read
-  from the `HS2_LLM_API_KEY` environment variable (never stored in the file).
-  Game folder detection: `HS2_GAME_ROOT` env var, else the parent folder, else
-  `../game` (Git layout).
 - **Mission info tab** — `misdesc` (lobby text) + the minimap.
 - **❓ Parameter help tab** — meaning and valid range of every field, verified
   against the 200+ missions of this install.
@@ -132,14 +105,3 @@ python3 hs2_aps_tool.py pack   "../Run/APRM/lang.aps" --section UNITS --from "..
 compressed directory of 20-byte records `(name_offset, 8, index+streams_before,
 size, 16384)` and a compressed `\0`-separated name table (cp1252, `\` paths).
 Verified by byte-identical extraction of all 1562 entries of `lang.aps`.
-
-## Piloter le Mission Editor avec Claude
-
-Deux modes, sans LLM local ni clé API : Claude fait office de LLM. Dans les deux cas, rien n'est écrit sans un aperçu
-préalable des mêmes opérations (token), et chaque écriture crée un backup horodaté.
-
-- **Claude Code** : lance `claude` dans `HS2_Tools/`. Les consignes sont dans `CLAUDE.md` ; Claude utilise `hs2_cli.py`
-  (`maps`, `context`, `units`, `preview`, `apply`). Variable `HS2_GAME_ROOT` (ou `HS2_MAPS_DIR`) pour désigner le jeu.
-- **Claude Desktop (MCP)** : copie `claude_desktop_config.example.json` dans la configuration de Claude Desktop en
-  remplaçant les chemins **absolus** (y compris celui de `python3`), puis redémarre l'application. Outils :
-  `list_missions`, `get_mission_context`, `search_units`, `preview_ops`, `apply_ops`.
